@@ -1,0 +1,38 @@
+{
+  "name": "GitHub Lead Sniper",
+  "nodes": [
+    {"parameters":{"httpMethod":"POST","path":"github-star","responseMode":"onReceived"},"id":"webhook","name":"GitHub Star Webhook","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[-1000,-260],"webhookId":"github-star"},
+    {"parameters":{"rule":{"interval":[{"field":"minutes","minutesInterval":15}]}},"id":"schedule","name":"Schedule Trigger (15 min)","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[-1000,180]},
+    {"parameters":{"method":"GET","url":"https://api.github.com/repos/n8n-io/n8n/stargazers","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Accept","value":"application/vnd.github.star+json"},{"name":"Authorization","value":"Bearer {{$env.GITHUB_TOKEN}}"}]},"options":{"response":{"response":{"fullResponse":true}}}},"id":"poll","name":"Poll Stargazers","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-760,180]},
+    {"parameters":{"jsCode":"const s = $getWorkflowStaticData('global'); s.seen ??= {}; const rows = $input.first().json.body ?? $input.first().json; return rows.filter(x => { const u=x.user?.login, k=`${u}:${x.starred_at??''}`; if(!u || s.seen[k]) return false; s.seen[k]=Date.now(); return true; }).map(x => ({json:{username:x.user.login,starred_at:x.starred_at}}));"},"id":"dedupe","name":"Dedupe New Stargazers","type":"n8n-nodes-base.code","typeVersion":2,"position":[-520,180]},
+    {"parameters":{"jsCode":"const p=$input.first().json; const username=p.sender?.login??p.user?.login??p.username; if(!username) throw new Error('GitHub star payload did not contain a username'); return [{json:{username,starred_at:p.starred_at??new Date().toISOString()}}];"},"id":"normalize","name":"Normalize Webhook Star","type":"n8n-nodes-base.code","typeVersion":2,"position":[-520,-260]},
+    {"parameters":{"method":"GET","url":"=https://api.github.com/users/{{$json.username}}","authentication":"predefinedCredentialType","nodeCredentialType":"httpHeaderAuth","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Accept","value":"application/vnd.github+json"}]},"options":{"response":{"response":{"fullResponse":true}}}},"id":"profile","name":"Enrich GitHub Profile","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[-240,-40],"credentials":{"httpHeaderAuth":{"id":"github-http-header-auth-placeholder","name":"GitHub PAT - Header Auth (placeholder)"}}},
+    {"parameters":{"jsCode":"const b=$json.body??$json,h=$json.headers??{}; return [{json:{...b,_rateLimitRemaining:Number(h['x-ratelimit-remaining']??h['X-RateLimit-Remaining']??5000),_rateLimitReset:Number(h['x-ratelimit-reset']??h['X-RateLimit-Reset']??0),_rateLimitStatus:$json.statusCode??200}}];"},"id":"rate","name":"Read Rate Limit Headers","type":"n8n-nodes-base.code","typeVersion":2,"position":[0,-40]},
+    {"parameters":{"conditions":{"options":{"caseSensitive":true,"typeValidation":"strict"},"conditions":[{"leftValue":"={{$json._rateLimitStatus}}","rightValue":403,"operator":{"type":"number","operation":"equals"}},{"leftValue":"={{$json._rateLimitRemaining}}","rightValue":10,"operator":{"type":"number","operation":"lt"}}],"combinator":"or"}},"id":"rateif","name":"Rate Limit Low or 403?","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[240,-40]},
+    {"parameters":{"amount":5,"unit":"seconds"},"id":"wait","name":"Exponential Backoff Wait","type":"n8n-nodes-base.wait","typeVersion":1.1,"position":[480,-180]},
+    {"parameters":{"conditions":{"options":{"typeValidation":"strict"},"conditions":[{"leftValue":"={{$json.followers}}","rightValue":100,"operator":{"type":"number","operation":"gt"}},{"leftValue":"={{$json.public_repos}}","rightValue":50,"operator":{"type":"number","operation":"gt"}}],"combinator":"or"}},"id":"qualified","name":"Qualified Lead?","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[480,100]},
+    {"parameters":{},"id":"discarded","name":"Discarded","type":"n8n-nodes-base.noOp","typeVersion":1,"position":[720,300]},
+    {"parameters":{"method":"POST","url":"https://api.openai.com/v1/chat/completions","authentication":"predefinedCredentialType","nodeCredentialType":"httpHeaderAuth","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Given this GitHub user's bio: {{$json.bio || 'No bio provided'}} and company: {{$json.company || 'No company listed'}}, generate exactly one sentence explaining why this user is worth reaching out to.\"}]\n}","options":{}},"id":"pitch","name":"AI Pitch (One Sentence)","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[720,20],"credentials":{"httpHeaderAuth":{"id":"openai-http-header-placeholder","name":"OpenAI API Header Auth (placeholder)"}}},
+    {"parameters":{"jsCode":"const b=$json.body??$json,p=b.choices?.[0]?.message?.content?.trim()||'This GitHub profile shows meaningful technical activity and may be a strong fit for a relevant conversation.'; return [{json:{...$json,ai_pitch:p.replace(/\\s+/g,' ')}}];"},"id":"format","name":"Format Lead Message","type":"n8n-nodes-base.code","typeVersion":2,"position":[960,20]},
+    {"parameters":{"resource":"message","operation":"post","channel":"#github-leads","text":"={{`*GitHub Lead Sniper*\\n*Name:* ${$json.name || $json.login}\\n*Profile:* https://github.com/${$json.login}\\n*Bio:* ${$json.bio || 'Not provided'}\\n*Followers:* ${$json.followers} | *Public repos:* ${$json.public_repos}\\n*Why reach out:* ${$json.ai_pitch}`}}","otherOptions":{}},"id":"slack","name":"Post Qualified Lead to Slack","type":"n8n-nodes-base.slack","typeVersion":2.2,"position":[1200,20],"credentials":{"slackApi":{"id":"slack-placeholder","name":"Slack OAuth (placeholder)"}}}
+  ],
+  "connections": {
+    "GitHub Star Webhook":{"main":[[{"node":"Normalize Webhook Star","type":"main","index":0}]]},
+    "Schedule Trigger (15 min)":{"main":[[{"node":"Poll Stargazers","type":"main","index":0}]]},
+    "Poll Stargazers":{"main":[[{"node":"Dedupe New Stargazers","type":"main","index":0}]]},
+    "Dedupe New Stargazers":{"main":[[{"node":"Enrich GitHub Profile","type":"main","index":0}]]},
+    "Normalize Webhook Star":{"main":[[{"node":"Enrich GitHub Profile","type":"main","index":0}]]},
+    "Enrich GitHub Profile":{"main":[[{"node":"Read Rate Limit Headers","type":"main","index":0}]]},
+    "Read Rate Limit Headers":{"main":[[{"node":"Rate Limit Low or 403?","type":"main","index":0}]]},
+    "Rate Limit Low or 403?":{"main":[[{"node":"Exponential Backoff Wait","type":"main","index":0}],[{"node":"Qualified Lead?","type":"main","index":0}]]},
+    "Exponential Backoff Wait":{"main":[[{"node":"Qualified Lead?","type":"main","index":0}]]},
+    "Qualified Lead?":{"main":[[{"node":"AI Pitch (One Sentence)","type":"main","index":0}],[{"node":"Discarded","type":"main","index":0}]]},
+    "AI Pitch (One Sentence)":{"main":[[{"node":"Format Lead Message","type":"main","index":0}]]},
+    "Format Lead Message":{"main":[[{"node":"Post Qualified Lead to Slack","type":"main","index":0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder":"v1"},
+  "versionId": "github-lead-sniper-v1",
+  "meta": {"templateCredsSetupCompleted": false},
+  "tags": []
+}

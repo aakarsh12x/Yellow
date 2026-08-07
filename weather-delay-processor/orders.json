@@ -1,0 +1,20 @@
+[
+  {
+    "order_id": "example-001",
+    "customer": "Alice",
+    "city": "New York",
+    "status": "Delayed"
+  },
+  {
+    "order_id": "example-002",
+    "customer": "Bob",
+    "city": "Chicago",
+    "status": "Delayed"
+  },
+  {
+    "order_id": "example-003",
+    "customer": "Charlie",
+    "city": "Los Angeles",
+    "status": "Processing"
+  }
+]
