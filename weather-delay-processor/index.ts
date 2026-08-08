@@ -29,11 +29,16 @@ function generateApologyMessage(order: Order, weatherMain: string, weatherDesc?:
 }
 
 function isDelayWeather(main: string): boolean {
-  return ["Rain", "Snow", "Extreme", "Thunderstorm", "Tornado", "Squall"].includes(main);
+  const normalized = main.trim().toLowerCase();
+  return ["rain", "snow", "extreme", "thunderstorm", "tornado", "squall"].includes(normalized);
 }
 
 function normalizeMain(main: string): string {
-  return ["Thunderstorm", "Tornado", "Squall"].includes(main) ? "Extreme" : main;
+  const normalized = main.trim().toLowerCase();
+  if (["thunderstorm", "tornado", "squall"].includes(normalized)) {
+    return "Extreme";
+  }
+  return main.charAt(0).toUpperCase() + main.slice(1);
 }
 
 async function fetchWeather(order: Order): Promise<{ order: Order; delayed: boolean; verified: boolean }> {
