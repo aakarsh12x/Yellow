@@ -1,13 +1,19 @@
-# AI Log
+# AI Log — Weather Delay Processor
 
-## Concurrent fetching prompt
+## 1. Concurrent Fetching Prompt
 
-“Write a TypeScript weather-order processor that maps every order to an OpenWeatherMap request and starts all requests concurrently with `Promise.all`; do not use a sequential await-in-loop. Keep each result tied to its original order and write the updated array after all requests finish.”
+> "Write a TypeScript weather-order processor that maps every order to an OpenWeatherMap request and starts all requests concurrently with `Promise.all`; do not use a sequential await-in-loop. Keep each result tied to its original order and write the updated array after all requests finish."
 
-The implementation uses `Promise.all(orders.map(fetchWeather))`, starting all network requests concurrently.
+**Implementation**: The script uses `Promise.all(orders.map(fetchWeather))`, initiating all HTTP requests to OpenWeatherMap simultaneously in parallel.
 
-## Resilience prompt
+## 2. Resilience & Error Handling Prompt
 
-“Catch an individual 404 or network failure, log the order ID and reason, emit a distinct ‘could not verify weather’ message, preserve the original status, and let all other requests finish.”
+> "Catch an individual 404 or network failure (such as an invalid city name 'InvalidCity123'), log the order ID and exact failure reason, preserve the original order status, and ensure the script continues without crashing so all other valid cities finish processing."
 
-The implementation uses a per-request `try/catch` inside `fetchWeather`, so one failed city cannot reject the batch.
+**Implementation**: Each API request is wrapped in its own `try...catch` block inside `fetchWeather`. Errors for specific cities (e.g. 404 Not Found for `InvalidCity123`) are caught, formatted, and logged, while remaining orders finish successfully.
+
+## 3. Weather-Aware Apology Generator Prompt
+
+> "Write a 'Weather-Aware Apology' function that takes an order object and the weather condition, and generates a personalized customer message like: 'Hi Alice, your order to New York is delayed due to heavy rain. We appreciate your patience!'"
+
+**Implementation**: The `generateApologyMessage` function extracts the customer's first name, maps OpenWeatherMap conditions (`Rain`, `Snow`, `Extreme`, `Thunderstorm`) to human-readable weather descriptions (e.g., `light rain`, `heavy snowfall`), and constructs the empathetic apology message.

@@ -1,13 +1,38 @@
-# Logic Log — GitHub Lead Sniper
+# Logic Log — GitHub Lead Sniper Workflow
 
-## Rate limits and backoff
+## 1. Handling GitHub API Rate Limits
 
-The workflow uses a GitHub Personal Access Token through an n8n HTTP Header Auth credential, not query parameters. Authenticated requests receive GitHub’s 5,000 requests/hour limit versus 60/hour unauthenticated. **Read Rate Limit Headers** reads `X-RateLimit-Remaining` and `X-RateLimit-Reset`. If remaining is under 10 or the response is 403, **Rate Limit Low or 403?** routes through a Wait node before continuing. For production, use the reset epoch and a retry counter to implement `min(base * 2 ** attempt, resetEpoch - now)` with bounded retries; this exponential-backoff path also covers GitHub secondary-rate-limit 403 responses.
+GitHub enforces strict rate limits depending on authentication status:
+- **Unauthenticated requests**: 60 requests per hour per IP address.
+- **Authenticated requests**: 5,000 requests per hour per user/token.
 
-## Webhook-first plus polling fallback
+To ensure resilience against rate limits and secondary rate limits (abuse limits), the workflow implements the following strategies:
 
-The webhook is primary because GitHub can deliver a new star immediately with minimal API usage. The 15-minute stargazer poll recovers missed deliveries, endpoint downtime, and older stars. Workflow static data stores a username/timestamp key so previously seen stargazers are not reprocessed.
+1. **Header-Based Authentication**:
+   All HTTP request nodes targeting `api.github.com` pass an `Authorization: Bearer <GITHUB_PAT>` header. This increases the rate limit threshold from 60 to 5,000 requests/hour.
 
-## Credentials
+2. **Rate Limit Header Inspection**:
+   Immediately following the profile enrichment API call (`GET /users/{username}`), a dedicated Code node parses the response headers:
+   - `X-RateLimit-Remaining`: The number of API requests remaining in the current 1-hour window.
+   - `X-RateLimit-Reset`: The UTC epoch timestamp when the rate limit window resets.
 
-The export contains placeholders only. After import, select a GitHub HTTP Header Auth credential with `Authorization: Bearer <PAT>`, an OpenAI header credential, and a Slack credential. No real tokens are included.
+3. **Conditional Backoff & Rate Limit Guard**:
+   An IF node (`Rate Limit Low or 403?`) evaluates two key conditions:
+   - If `X-RateLimit-Remaining < 10`, or
+   - If HTTP status code is `403` (GitHub rate limit exceeded or secondary rate limit triggered).
+   
+   If either condition evaluates to true, the workflow pauses execution via an **Exponential Backoff / Wait** node, allowing the rate limit counter to reset before attempting further processing.
+
+4. **Stargazer Deduplication**:
+   To minimize redundant API calls, the polling flow uses `n8n` static workflow data (`$getWorkflowStaticData`) to cache previously processed `username:starred_at` keys. Stargazers that have already been enriched are filtered out prior to making API calls.
+
+## 2. Trigger Strategy (Webhook + Polling Fallback)
+
+- **Webhook Trigger**: Receives instant `watch` (star) events directly from GitHub with zero delay and minimal API budget consumption.
+- **15-Minute Polling Trigger**: Acts as a safety fallback to poll `/repos/n8n-io/n8n/stargazers` periodically, catching any events missed during network disruptions.
+
+## 3. Lead Qualification & Sales Pitch Logic
+
+- **Qualification Filter**: Checks if `followers > 100` OR `public_repos > 50`. Unqualified leads are safely routed to a NoOp node.
+- **AI Sales Pitch**: Qualified profiles pass `bio` and `company` to an LLM node (`gpt-4o-mini`), generating a concise 1-sentence outreach pitch.
+- **Notification**: The final formatted output is dispatched directly to Slack/Discord.
