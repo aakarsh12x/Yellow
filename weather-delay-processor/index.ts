@@ -10,15 +10,12 @@ const ordersPath = resolve(process.cwd(), "orders.json");
 const apiKey = process.env.OPENWEATHER_API_KEY;
 const useMock = process.env.USE_MOCK_WEATHER === "true";
 
-/**
- * AI-Generated Weather-Aware Apology Function
- * Generates a personalized delay notification based on customer name, city, and weather condition.
- */
+// Builds a personalized delay message for the customer
 function generateApologyMessage(order: Order, weatherMain: string, weatherDesc?: string): string {
   const firstName = order.customer.split(" ")[0];
   const causes: Record<string, string> = {
-    Rain: weatherDesc ? weatherDesc : "heavy rain",
-    Snow: weatherDesc ? weatherDesc : "heavy snowfall",
+    Rain: weatherDesc || "heavy rain",
+    Snow: weatherDesc || "heavy snowfall",
     Extreme: "severe weather conditions",
     Thunderstorm: "severe thunderstorms",
     Tornado: "tornado warnings",
@@ -65,7 +62,7 @@ async function fetchWeather(order: Order): Promise<{ order: Order; delayed: bool
       const weather = (await response.json()) as WeatherResponse;
       const condition = weather.weather?.[0];
       if (!condition) {
-        throw new Error("API response did not contain weather condition details");
+        throw new Error("API response missing weather condition");
       }
       main = condition.main;
       description = condition.description;
@@ -75,51 +72,45 @@ async function fetchWeather(order: Order): Promise<{ order: Order; delayed: bool
     if (isDelayWeather(main)) {
       order.status = "Delayed";
       const apology = generateApologyMessage(order, normalized, description);
-      console.log(`[APOLOGY MESSAGE] ${apology}`);
+      console.log(`[DELAY] Order ${order.order_id} (${order.city}): ${apology}`);
       return { order, delayed: true, verified: true };
     }
 
-    console.log(`[OK] Order ${order.order_id} (${order.city}): Weather is '${main}' - Status remains '${order.status}'`);
+    console.log(`[OK] Order ${order.order_id} (${order.city}): ${main} - status unchanged`);
     return { order, delayed: false, verified: true };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.error(`[ERROR] Weather lookup failed for Order ${order.order_id} (${order.city}): ${reason}`);
-    console.error(`[INFO] Preserving original status '${order.status}' for Order ${order.order_id}. Continuing execution...`);
+    console.error(`[ERROR] Order ${order.order_id} (${order.city}): ${reason}`);
+    console.log(`[INFO] Preserving status for Order ${order.order_id}`);
     return { order, delayed: false, verified: false };
   }
 }
 
 async function main(): Promise<void> {
   if (!apiKey && !useMock) {
-    throw new Error("OPENWEATHER_API_KEY is missing in .env file.");
+    throw new Error("OPENWEATHER_API_KEY missing in .env");
   }
 
-  console.log("=== Starting Parallel Weather Delay Processor ===");
   const ordersRaw = await readFile(ordersPath, "utf8");
   const orders = JSON.parse(ordersRaw) as Order[];
 
   if (!Array.isArray(orders)) {
-    throw new Error("orders.json must contain an array of order objects.");
+    throw new Error("orders.json must be an array of orders");
   }
 
-  console.log(`Processing ${orders.length} orders concurrently via Promise.all...`);
-  
-  // Parallel Fetching using Promise.all
+  console.log(`Processing ${orders.length} orders concurrently...`);
+
+  // Fetch weather concurrently for all orders
   const results = await Promise.all(orders.map((order) => fetchWeather(order)));
 
-  // Write updated status to orders.json
+  // Write updated orders back to orders.json
   await writeFile(ordersPath, `${JSON.stringify(orders, null, 2)}\n`, "utf8");
 
   const delayed = results.filter((r) => r.delayed).length;
   const failed = results.filter((r) => !r.verified).length;
   const normal = results.length - delayed - failed;
 
-  console.log("\n=== Execution Summary ===");
-  console.log(`Total Orders: ${results.length}`);
-  console.log(`Delayed Orders: ${delayed}`);
-  console.log(`Failed / Handled Errors: ${failed}`);
-  console.log(`Unaffected Orders: ${normal}`);
-  console.log("Updated orders.json successfully saved.");
+  console.log(`Done. ${delayed} delayed, ${failed} failed lookup, ${normal} normal.`);
 }
 
 main().catch((error) => {
